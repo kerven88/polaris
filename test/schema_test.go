@@ -18,10 +18,10 @@ import (
 var testCases = []testCase{}
 
 type testCase struct {
-	check    string
-	filename string
-	input    []byte
-	failure  bool
+	check     string
+	filename  string
+	resources *kube.ResourceProvider
+	failure   bool
 }
 
 func init() {
@@ -39,15 +39,15 @@ func init() {
 			panic(err)
 		}
 		for _, tc := range cases {
-			body, err := ioutil.ReadFile(checkDir + "/" + tc.Name())
+			resources, err := kube.CreateResourceProviderFromPath(checkDir + "/" + tc.Name())
 			if err != nil {
 				panic(err)
 			}
 			testCases = append(testCases, testCase{
-				filename: tc.Name(),
-				check:    check,
-				input:    body,
-				failure:  strings.Contains(tc.Name(), "failure"),
+				filename:  tc.Name(),
+				check:     check,
+				resources: resources,
+				failure:   strings.Contains(tc.Name(), "failure"),
 			})
 		}
 	}
@@ -55,30 +55,25 @@ func init() {
 
 func TestChecks(t *testing.T) {
 	for _, tc := range testCases {
-		res, err := kube.NewGenericResourceFromBytes(tc.input)
-		if err != nil {
-			fmt.Println("error parsing", string(tc.input))
-			panic(err)
-		}
 		c, err := config.Parse([]byte("checks:\n  " + tc.check + ": danger"))
 		if err != nil {
 			panic(err)
 		}
-		result, err := validator.ApplyAllSchemaChecks(&c, res)
+		results, err := validator.ApplyAllSchemaChecksToResourceProvider(&c, tc.resources)
 		if err != nil {
 			panic(err)
 		}
-		summary := result.GetSummary()
+		auditData := validator.AuditData{Results: results}
+		summary := auditData.GetSummary()
 		total := summary.Successes + summary.Dangers
 		msg := fmt.Sprintf("Check %s ran %d times instead of 1", tc.check, total)
-		if assert.Equal(t, uint(1), total, msg) {
+		if assert.LessOrEqual(t, uint(1), total, msg) {
 			if tc.failure {
 				message := "Check " + tc.check + " passed unexpectedly for " + tc.filename
-				assert.Equal(t, uint(0), summary.Successes, message)
-				assert.Equal(t, uint(1), summary.Dangers, message)
+				assert.LessOrEqual(t, uint(1), summary.Dangers, message)
 			} else {
 				message := "Check " + tc.check + " failed unexpectedly for " + tc.filename
-				assert.Equal(t, uint(1), summary.Successes, message)
+				assert.LessOrEqual(t, uint(1), summary.Successes, message)
 				assert.Equal(t, uint(0), summary.Dangers, message)
 			}
 		}

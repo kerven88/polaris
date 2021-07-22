@@ -23,7 +23,8 @@ func (cs CountSummary) GetScore() uint {
 	if total == 0 {
 		return uint(100)
 	}
-	return uint((float64(cs.Successes*2) / float64(total)) * 100)
+	score := uint((float64(cs.Successes*2) / float64(total)) * 100)
+	return score
 }
 
 // AddSummary adds two CountSummaries together
@@ -124,10 +125,8 @@ func (c Result) GetSummaryByCategory() CountSummaryByCategory {
 // GetSummary summarizes AuditData
 func (a AuditData) GetSummary() CountSummary {
 	summary := CountSummary{}
-	for _, ctrlResult := range a.Results {
-		if ctrlResult.PodResult != nil {
-			summary.AddSummary(ctrlResult.GetSummary())
-		}
+	for _, res := range a.Results {
+		summary.AddSummary(res.GetSummary())
 	}
 	return summary
 }

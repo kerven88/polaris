@@ -1,6 +1,38 @@
 ---
 sidebarDepth: 0
 ---
+## 4.0.7
+* Fix goreleaser format
+
+## 4.0.6
+* Change goreleaser format
+* Fix `--helm-values` flag
+
+## 4.0.5
+* Bugfix for repeated objects on the dashboard
+
+## 4.0.4
+* Bugfix for validating webhook and non-pod checks
+
+## 4.0.3
+* Fixed bad interaction between `--set-exit-score-below` and `--only-show-failed-tests`
+* Dependency updates
+* Support for Helm chart scanning
+
+## 4.0.2
+* Goreleaser fix
+
+## 4.0.1
+* Goreleaser fix
+
+## 4.0.0
+* Add support for arbitrary resources, like Ingress or PodDisruptionBudget
+* Add support check templating (see docs)
+* Add support for multi-resource checks (see docs)
+
+### Breaking Changes
+* In custom checks, `jsonSchema` is now `schemaString`
+* Check `pdbDisruptionsAllowedGreaterThanZero` is now called `pdbDisruptionsIsZero`
 
 ## 3.2.0
 * Add `--format=pretty` option for CLI output
