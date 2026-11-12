@@ -7,21 +7,21 @@ jobs:
   build-int:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6.0.2
       - name: Setup polaris
         uses: ./.github/actions/setup-polaris
         with:
-          version: 3.0.3
+          version: 4.2.0
       - name: Use command
         run: polaris version
 
   build-ext:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6.0.2
       - name: Setup polaris
         uses: fairwindsops/polaris/.github/actions/setup-polaris@master
         with:
-          version: 3.0.3
+          version: 4.2.0
       - name: Use command
         run: polaris version

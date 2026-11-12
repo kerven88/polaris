@@ -16,24 +16,29 @@ package config
 
 import (
 	"bytes"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
 
-	"github.com/gobuffalo/packr/v2"
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
 // Configuration contains all of the config for the validation checks.
 type Configuration struct {
-	DisplayName        string                 `json:"displayName"`
-	Checks             map[string]Severity    `json:"checks"`
-	CustomChecks       map[string]SchemaCheck `json:"customChecks"`
-	Exemptions         []Exemption            `json:"exemptions"`
-	DisallowExemptions bool                   `json:"disallowExemptions"`
+	DisplayName                  string                 `json:"displayName"`
+	Checks                       map[string]Severity    `json:"checks"`
+	CustomChecks                 map[string]SchemaCheck `json:"customChecks"`
+	Exemptions                   []Exemption            `json:"exemptions"`
+	DisallowExemptions           bool                   `json:"disallowExemptions"`
+	DisallowConfigExemptions     bool                   `json:"disallowConfigExemptions"`
+	DisallowAnnotationExemptions bool                   `json:"disallowAnnotationExemptions"`
+	Mutations                    []string               `json:"mutations"`
+	KubeContext                  string                 `json:"kubeContext"`
+	Namespace                    string                 `json:"namespace"`
 }
 
 // Exemption represents an exemption to normal rules
@@ -44,36 +49,53 @@ type Exemption struct {
 	Namespace       string   `json:"namespace"`
 }
 
-var configBox = (*packr.Box)(nil)
+//go:embed default.yaml
+var defaultConfig []byte
 
-func getConfigBox() *packr.Box {
-	if configBox == (*packr.Box)(nil) {
-		configBox = packr.New("Config", "../../examples")
-	}
-	return configBox
-}
-
-// ParseFile parses config from a file.
-func ParseFile(path string) (Configuration, error) {
-	var rawBytes []byte
-	var err error
-	if path == "" {
-		rawBytes, err = getConfigBox().Find("config.yaml")
-	} else if strings.HasPrefix(path, "https://") || strings.HasPrefix(path, "http://") {
-		// path is a url
-		response, err2 := http.Get(path)
-		if err2 != nil {
-			return Configuration{}, err2
-		}
-		rawBytes, err = ioutil.ReadAll(response.Body)
-	} else {
-		// path is local
-		rawBytes, err = ioutil.ReadFile(path)
-	}
+// MergeConfigAndParseFile parses config from a file.
+func MergeConfigAndParseFile(customConfigPath string, mergeConfig bool) (Configuration, error) {
+	rawBytes, err := mergeConfigFile(customConfigPath, mergeConfig)
 	if err != nil {
 		return Configuration{}, err
 	}
+
 	return Parse(rawBytes)
+}
+
+func mergeConfigFile(customConfigPath string, mergeConfig bool) ([]byte, error) {
+	if customConfigPath == "" {
+		return defaultConfig, nil
+	}
+
+	var customConfigContent []byte
+	var err error
+	if strings.HasPrefix(customConfigPath, "https://") || strings.HasPrefix(customConfigPath, "http://") {
+		// path is a url
+		response, err := http.Get(customConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		customConfigContent, err = io.ReadAll(response.Body)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// path is local
+		customConfigContent, err = os.ReadFile(customConfigPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if mergeConfig {
+		mergedConfig, err := mergeYaml(defaultConfig, customConfigContent)
+		if err != nil {
+			return nil, err
+		}
+		return mergedConfig, nil
+	}
+
+	return customConfigContent, nil
 }
 
 // Parse parses config from a byte array.
@@ -86,7 +108,7 @@ func Parse(rawBytes []byte) (Configuration, error) {
 			if err == io.EOF {
 				break
 			}
-			return conf, fmt.Errorf("Decoding config failed: %v", err)
+			return conf, fmt.Errorf("decoding config failed: %v", err)
 		}
 	}
 	for key, check := range conf.CustomChecks {
@@ -105,7 +127,7 @@ func Parse(rawBytes []byte) (Configuration, error) {
 // Validate checks if a config is valid
 func (conf Configuration) Validate() error {
 	if len(conf.Checks) == 0 {
-		return errors.New("No checks were enabled")
+		return errors.New("no checks were enabled")
 	}
 	return nil
 }

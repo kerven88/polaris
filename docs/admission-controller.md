@@ -1,3 +1,8 @@
+---
+meta:
+  - name: description
+    content: "Fairwinds Polaris | Documentation: Polaris can be run as an admission controller that acts as a validating webhook."
+---
 # Admission Controller
 > Want to manage the Admission Controller across multiple clusters? Check out
 > [Fairwinds Insights](https://www.fairwinds.com/fairwinds-polaris-upgrade)
@@ -20,15 +25,10 @@ If you don't use cert-manager, you'll need to:
 * Create a TLS secret in your cluster with a valid certificate that uses that CA
 * Pass the name of that secret with the webhook.secretName parameter.
 
-### kubectl
-```bash
-kubectl apply -f https://github.com/fairwindsops/polaris/releases/latest/download/webhook.yaml
-```
-
 ### Helm
 ```bash
 helm repo add fairwinds-stable https://charts.fairwinds.com/stable
-helm upgrade --install polaris fairwinds-stable/polaris --namespace polaris \
+helm upgrade --install polaris fairwinds-stable/polaris --namespace polaris --create-namespace \
   --set webhook.enable=true --set dashboard.enable=false
 ```
 
@@ -45,3 +45,38 @@ output unless we are rejecting a workload altogether.
 This means that any checks with a severity of `warning` will still pass webhook validation,
 and the only evidence of that warning will either be in the Polaris dashboard or the
 Polaris webhook logs. This will change in a future version of Kubernetes.
+
+## Mutating Webhook
+By default, the Admission Controller is just pass/fail, but
+Polaris can also operate as a mutating webhook for many of the issues it checks for.
+This means Polaris will remediate the issue it finds, rather than rejecting
+the deployment.
+
+To enable the mutating webhook, add `--set webhook.mutate=true` to your
+Helm installation command.
+
+The following default checks currently have mutation support enabled:
+* `hostPIDSet`
+* `hostNetworkSet`
+* `hostIPCSet`
+* `priorityClassNotSet`
+* `hostPortSet`
+* `pullPolicyNotAlways`
+* `deploymentMissingReplicas`
+* `dangerousCapabilities`
+* `cpuLimitsMissing`
+* `memoryLimitsMissing`
+* `livenessProbeMissing`
+* `memoryRequestsMissing`
+* `cpuRequestsMissing`
+* `runAsPrivileged`
+* `readinessProbeMissing`
+* `privilegeEscalationAllowed`
+* `notReadOnlyRootFilesystem`
+* `insecureCapabilities`
+* `runAsRootAllowed`
+
+If you'd like to
+enable other mutations, you can set the `webhook.mutations` flag.
+
+

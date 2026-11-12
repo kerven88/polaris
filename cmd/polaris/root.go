@@ -15,20 +15,26 @@
 package cmd
 
 import (
-	"flag"
 	"os"
+	"strings"
 
 	conf "github.com/fairwindsops/polaris/pkg/config"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
-var configPath string
-var disallowExemptions bool
-var logLevel string
-var auditPath string
-var displayName string
+var (
+	mergeConfig                  bool
+	configPath                   string
+	disallowExemptions           bool
+	disallowConfigExemptions     bool
+	disallowAnnotationExemptions bool
+	logLevel                     string
+	auditPath                    string
+	displayName                  string
+	kubeContext                  string
+	insightsHost                 string
+)
 
 var (
 	version string
@@ -36,11 +42,14 @@ var (
 
 func init() {
 	// Flags
+	rootCmd.PersistentFlags().BoolVarP(&mergeConfig, "merge-config", "m", false, "If true, custom configuration will be merged with default configuration instead of replacing it.")
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "Location of Polaris configuration file.")
-	rootCmd.PersistentFlags().BoolVarP(&disallowExemptions, "disallow-exemptions", "", false, "Disallow any exemptions from configuration file.")
-	rootCmd.PersistentFlags().StringVarP(&logLevel, "log-level", "", logrus.InfoLevel.String(), "Logrus log level.")
-	flag.Parse()
-	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
+	rootCmd.PersistentFlags().StringVarP(&kubeContext, "context", "x", "", "Set the kube context.")
+	rootCmd.PersistentFlags().BoolVarP(&disallowExemptions, "disallow-exemptions", "", false, "Disallow any configured exemption.")
+	rootCmd.PersistentFlags().BoolVarP(&disallowConfigExemptions, "disallow-config-exemptions", "", false, "Disallow exemptions set within the configuration file.")
+	rootCmd.PersistentFlags().BoolVarP(&disallowAnnotationExemptions, "disallow-annotation-exemptions", "", false, "Disallow any exemption defined as a controller annotation.")
+	rootCmd.PersistentFlags().StringVarP(&logLevel, "log-level", "", logrus.InfoLevel.String(), "Logrus log level to be output (trace, debug, info, warning, error, fatal, panic).")
+	rootCmd.PersistentFlags().StringVar(&insightsHost, "insights-host", "https://insights.fairwinds.com", "Fairwinds Insights host URL")
 }
 
 var config conf.Configuration
@@ -57,16 +66,16 @@ var rootCmd = &cobra.Command{
 			logrus.SetLevel(parsedLevel)
 		}
 
-		config, err = conf.ParseFile(configPath)
+		config, err = conf.MergeConfigAndParseFile(configPath, mergeConfig)
 		if err != nil {
 			logrus.Errorf("Error parsing config at %s: %v", configPath, err)
 			os.Exit(1)
 		}
 
-		if disallowExemptions {
-			config.DisallowExemptions = true
-		}
-
+		config.DisallowExemptions = disallowExemptions
+		config.DisallowConfigExemptions = disallowConfigExemptions
+		config.DisallowAnnotationExemptions = disallowAnnotationExemptions
+		config.KubeContext = kubeContext
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		logrus.Error("You must specify a sub-command.")
@@ -75,6 +84,13 @@ var rootCmd = &cobra.Command{
 			logrus.Error(err)
 		}
 		os.Exit(1)
+	},
+	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+		if !strings.HasPrefix(cmd.Use, "audit") {
+			if _, err := os.Stderr.WriteString("\n\nWant more? Automate Polaris for free with Fairwinds Insights!\n🚀 https://fairwinds.com/insights-signup/polaris 🚀 \n"); err != nil {
+				logrus.Error(err)
+			}
+		}
 	},
 }
 

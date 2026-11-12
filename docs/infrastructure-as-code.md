@@ -1,3 +1,8 @@
+---
+meta:
+  - name: description
+    content: "Fairwinds Polaris | Documentation | Polaris can be used on the command line to audit local Kubernetes manifests stored in YAML files."
+---
 # Infrastructure as Code
 > Want to see results for all your IaC repos in one place? Check out
 > [Fairwinds Insights](https://www.fairwinds.com/fairwinds-polaris-upgrade)
@@ -19,6 +24,32 @@ brew tap FairwindsOps/tap
 brew install FairwindsOps/tap/polaris
 polaris version
 ```
+
+## Checking Infrastructure as Code files
+You can audit Kubernetes YAML files by running:
+```bash
+polaris audit --audit-path ./deploy/ --format=pretty
+```
+This will print out any issues Polaris finds in your manifests.
+
+Polaris can only check raw YAML manifests. If you'd like to check a Helm template,
+you can run `helm template` to generate a manifest that Polaris can check.
+
+## Fixing Issues
+Polaris can automatically fix many of the issues it finds. For example, you can run
+```bash
+polaris fix --files-path ./deploy/ --checks=all
+```
+
+to fix any issues inside the `deploy` directory. Polaris may leave
+comments next to some changes (e.g. liveness and readiness probes) prompting
+the user to set them to something more appropriate given the context of their
+application.
+
+Note that not all issues can be automatically fixed.
+
+Currently only raw YAML manifests can be mutated. Helm charts etc.
+still need to be changed manually.
 
 ## Running in a CI pipeline
 
@@ -55,6 +86,14 @@ polaris audit --audit-path ./deploy/ \
   --only-show-failed-tests true
 ```
 
+### Audit Helm Charts
+You can audit helm charts using the `--helm-chart` and `--helm-values` flags:
+```
+polaris audit \
+  --helm-chart ./deploy/chart \
+  --helm-values ./deploy/chart/values.yml
+```
+
 ### As Github Action
 #### Setup polaris action
 
@@ -75,9 +114,9 @@ The version number of the release tag.
 ##### Example usage
 
 ```yaml
-uses: fairwindsops/polaris@master
+uses: fairwindsops/polaris/.github/actions/setup-polaris@master
 with:
-  version: "3.0.3"
+  version: 5.0.0
 ```
 
 Example inside a job:
@@ -86,9 +125,9 @@ Example inside a job:
 steps:
   - uses: actions/checkout@v2
   - name: Setup polaris
-    uses: fairwindsops/polaris@master
+    uses: fairwindsops/polaris/.github/actions/setup-polaris@master
     with:
-      version: 3.0.3
+      version: 5.0.0
 
   - name: Use command
     run: polaris version

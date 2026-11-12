@@ -15,8 +15,8 @@
 package cmd
 
 import (
+	"context"
 	"os"
-	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -25,15 +25,22 @@ import (
 	k8sConfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
 var webhookPort int
 var disableWebhookConfigInstaller bool
+var enableMutations bool
+var enableValidations bool
+var certDir string
 
 func init() {
 	rootCmd.AddCommand(webhookCmd)
 	webhookCmd.PersistentFlags().IntVarP(&webhookPort, "port", "p", 9876, "Port for the dashboard webserver.")
-	webhookCmd.PersistentFlags().BoolVar(&disableWebhookConfigInstaller, "disable-webhook-config-installer", false, "disable the installer in the webhook server, so it won't install webhook configuration resources during bootstrapping.")
+	webhookCmd.PersistentFlags().BoolVar(&disableWebhookConfigInstaller, "disable-webhook-config-installer", false, "Disable the installer in the webhook server, so it won't install webhook configuration resources during bootstrapping.")
+	webhookCmd.PersistentFlags().BoolVar(&enableValidations, "validate", true, "Enable the validating webhook to reject workloads with issues")
+	webhookCmd.PersistentFlags().BoolVar(&enableMutations, "mutate", false, "Enable the mutating webhook to modify workloads with issues")
+	webhookCmd.PersistentFlags().StringVar(&certDir, "cert-dir", "/opt/cert", "Directory in which tls certificate is located")
 }
 
 var webhookCmd = &cobra.Command{
@@ -44,27 +51,34 @@ var webhookCmd = &cobra.Command{
 		logrus.Debug("Setting up controller manager")
 
 		mgr, err := manager.New(k8sConfig.GetConfigOrDie(), manager.Options{
-			CertDir: "/opt/cert",
-			Port:    webhookPort,
+			WebhookServer: webhook.NewServer(webhook.Options{
+				CertDir:  certDir,
+				Port:     webhookPort,
+				CertName: "tls.crt",
+				KeyName:  "tls.key",
+			}),
 		})
 		if err != nil {
 			logrus.Errorf("Unable to set up overall controller manager: %v", err)
 			os.Exit(1)
 		}
 
-		_, err = os.Stat("/opt/cert/tls.crt")
+		_, err = os.Stat(certDir + "/tls.crt")
 		if os.IsNotExist(err) {
-			time.Sleep(time.Second * 10)
 			panic("Cert does not exist")
 		}
-		server := mgr.GetWebhookServer()
-		server.CertName = "tls.crt"
-		server.KeyName = "tls.key"
 
-		// Iterate all the configurations supported controllers to scan and register them for webhooks
-		// Should only register controllers that are configured to be scanned
-		fwebhook.NewWebhook(mgr, fwebhook.Validator{Config: config, Client: mgr.GetClient()})
+		if !enableMutations && !enableValidations {
+			logrus.Errorf("One of --mutate or --validate must be set to true")
+			os.Exit(1)
+		}
 
+		if enableValidations {
+			fwebhook.NewValidateWebhook(mgr, config)
+		}
+		if enableMutations {
+			fwebhook.NewMutateWebhook(context.Background(), mgr, config)
+		}
 		logrus.Infof("Polaris webhook server listening on port %d", webhookPort)
 		if err := mgr.Start(signals.SetupSignalHandler()); err != nil {
 			logrus.Errorf("Error starting manager: %v", err)

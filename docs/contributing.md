@@ -1,3 +1,8 @@
+---
+meta:
+  - name: description
+    content: "Fairwinds Polaris | Contribution Guidelines"
+---
 # Contributing
 
 Issues, whether bugs, tasks, or feature requests are essential for keeping Polaris great. We believe it should be as easy as possible to contribute changes that get things working in your environment. There are a few guidelines that we need contributors to follow so that we can keep on top of things.
@@ -41,12 +46,11 @@ go test ./pkg/... -v -coverprofile cover.out
 ### Webhook tests
 ```bash
 kind create cluster --wait=90s --image kindest/node:v1.15.11 --name polaris-test
-docker build -t quay.io/fairwinds/polaris:debug . # or use your own registry
-docker push quay.io/fairwinds/polaris:debug
+docker build -t us-docker.pkg.dev/fairwinds-ops/oss/polaris:debug . # or use your own registry
+docker push us-docker.pkg.dev/fairwinds-ops/oss/polaris:debug
 helm repo add jetstack https://charts.jetstack.io
-kubectl create ns cert-manager
-helm install cert-manager jetstack/cert-manager --namespace cert-manager --version 0.16.1 --set "installCRDs=true" --wait
-POLARIS_IMAGE=quay.io/fairwinds/polaris:debug ./test/webhook_test.sh
+ helm install cert-manager jetstack/cert-manager --namespace cert-manager --version v1.12.1 --set "installCRDs=true" --wait
+POLARIS_IMAGE=us-docker.pkg.dev/fairwinds-ops/oss/polaris:debug ./test/webhook_test.sh
 ```
 to avoid the final cleanup for debugging purposes, you can run
 ```bash
@@ -68,50 +72,7 @@ Each new pull request should:
 - Be up to date and/or rebased on the master branch
 
 ## Creating a new release
+To create a new release, simply tag this repo with the new version.
 
-### Patch releases
-Patch releases only need to change this repo. The Helm chart and deploy scripts
-will automatically pull in the latest changes.
-
-If the release involves changes to anything in the `deploy/` folder (e.g. new RBAC permissions),
-it needs to be a minor or major release in order to prevent breaking the Helm chart.
-
-1. Create a PR for this repo
-    1. Bump the version number in:
-        1. main.go
-        2. README.md
-    2. Update CHANGELOG.md
-    3. Merge your PR
-2. Tag the latest branch for this repo
-    1. Pull the latest commit for the `master` branch (which you just merged in your PR)
-    2. Run `git tag $VERSION && git push --tags`
-    3. Make sure CircleCI runs successfully for the new tag - this will push images to quay.io and create a release in GitHub
-        1. If CircleCI fails, check with Codeowners ASAP
-
-### Minor/Major releases
-Minor and major releases need to change both this repository and the
-[Helm chart repo](https://github.com/FairwindsOps/charts/).
-
-The steps are:
-1. Modify the [Helm chart](https://github.com/FairwindsOps/charts/stable/polaris)
-    1. Clone the helm charts repo
-        1. `git clone https://github.com/FairwindsOps/charts`
-        2. `git checkout -b yourname/update-polaris`
-    1. Bump the version number in `stable/polaris/Chart.yaml`
-    2. Make any necessary changes to the chart to support the new version of Polaris (e.g. new RBAC permissions)
-    3. **Don't merge yet!**
-2. Create a PR for this repo
-    1. Create a new branch named `yourname/update-version`
-    2. Bump the version number in:
-        1. main.go
-        2. README.md
-    3. Regenerate the deployment files. Assuming you've cloned the charts repo to `~/git/charts`:
-        1. `CHARTS_DIR=~/git/charts ./scripts/generate-deployment-files.sh`
-    4. Update CHANGELOG.md
-    5. Merge your PR
-3. Tag the latest branch for this repo
-    1. Pull the latest for the `master` branch
-    2. Run `git tag $VERSION && git push --tags`
-    3. Make sure CircleCI runs successfully for the new tag - this will push images to quay.io and create a release in GitHub
-        1. If CircleCI fails, check with Codeowners ASAP
-4. Create and merge a PR for your changes to the Helm chart
+For major and minor releases, don't forget to update the Helm chart at
+https://github.com/FairwindsOps/charts

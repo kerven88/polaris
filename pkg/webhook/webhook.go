@@ -17,16 +17,16 @@ package webhook
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
+	"strings"
 
+	"github.com/fairwindsops/controller-utils/pkg/controller"
 	"github.com/fairwindsops/polaris/pkg/config"
 	"github.com/fairwindsops/polaris/pkg/kube"
 	validator "github.com/fairwindsops/polaris/pkg/validator"
 
 	"github.com/sirupsen/logrus"
-	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -40,115 +40,115 @@ type Validator struct {
 	Config  config.Configuration
 }
 
-// InjectDecoder injects the decoder.
-func (v *Validator) InjectDecoder(d *admission.Decoder) error {
-	logrus.Info("Injecting decoder")
-	v.decoder = d
-	return nil
-}
-
-var _ admission.Handler = &Validator{}
-
-// NewWebhook creates a validating admission webhook for the apiType.
-func NewWebhook(mgr manager.Manager, validator Validator) {
+// NewValidateWebhook creates a validating admission webhook for the apiType.
+func NewValidateWebhook(mgr manager.Manager, c config.Configuration) {
 	path := "/validate"
-
+	decoder := admission.NewDecoder(runtime.NewScheme())
+	validator := Validator{
+		Client:  mgr.GetClient(),
+		decoder: &decoder,
+		Config:  c,
+	}
 	mgr.GetWebhookServer().Register(path, &webhook.Admission{Handler: &validator})
 }
 
-// GetObjectFromRawRequest returns the pod object and the controller's object from the raw json bytes.
-func GetObjectFromRawRequest(raw []byte) (corev1.Pod, interface{}, error) {
-	pod := corev1.Pod{}
-	var originalObject interface{}
-
-	decoded := map[string]interface{}{}
-	err := json.Unmarshal(raw, &decoded)
-	if err != nil {
-		return pod, originalObject, err
-	}
-	podMap := kube.GetPodSpec(decoded)
-	if podMap == nil {
-		return pod, originalObject, errors.New("Object does not contain pods")
-	}
-	encoded, err := json.Marshal(podMap)
-	if err != nil {
-		return pod, originalObject, err
-	}
-	err = json.Unmarshal(encoded, &pod.Spec)
-	if err != nil {
-		return pod, originalObject, err
-	}
-	originalObject = decoded
-	return pod, originalObject, err
+func (v *Validator) handleInternal(ctx context.Context, req admission.Request) (*validator.Result, kube.GenericResource, error) {
+	return GetValidatedResults(ctx, req.Kind.Kind, v.decoder, req, v.Config)
 }
 
-func (v *Validator) handleInternal(req admission.Request) (*validator.PodResult, error) {
-	pod := corev1.Pod{}
-	var originalObject interface{}
+// GetValidatedResults returns the validated results.
+func GetValidatedResults(ctx context.Context, kind string, decoder *admission.Decoder, req admission.Request, config config.Configuration) (*validator.Result, kube.GenericResource, error) {
+	var resource kube.GenericResource
 	var err error
-	if req.AdmissionRequest.Kind.Kind == "Pod" {
-		err := v.decoder.Decode(req, &pod)
+	rawBytes := req.Object.Raw
+	if req.Operation == "DELETE" {
+		rawBytes = req.OldObject.Raw // Object.Raw is empty for DELETEs
+	}
+	var decoded map[string]any
+	err = json.Unmarshal(rawBytes, &decoded)
+	if err != nil {
+		logrus.Errorf("Error unmarshaling JSON")
+		return nil, resource, err
+	}
+	if ownerReferences, ok := decoded["metadata"].(map[string]any)["ownerReferences"].([]any); ok && len(ownerReferences) > 0 {
+		dynamicClient, restMapper, _, _, err := kube.GetKubeClient(context.Background(), "")
 		if err != nil {
-			return nil, err
+			logrus.Errorf("getting the kubernetes client: %v", err)
+			return nil, resource, err
 		}
-		if len(pod.ObjectMeta.OwnerReferences) > 0 {
-			logrus.Infof("Allowing owned pod %s/%s to pass through webhook", pod.ObjectMeta.Namespace, pod.ObjectMeta.Name)
-			return nil, nil
+		ownerReference := ownerReferences[0].(map[string]any)
+		ctrl, err := kube.GetObject(context.Background(), req.Namespace, ownerReference["kind"].(string), ownerReference["apiVersion"].(string), ownerReference["name"].(string), dynamicClient, restMapper)
+		if err != nil {
+			logrus.Infof("error retrieving owner for object %s - running checks: %v", req.Name, err)
+		} else if err := controller.ValidateIfControllerMatches(decoded, ctrl.Object); err != nil {
+			logrus.Infof("object %s has an owner but the owner is invalid - running checks: %v", req.Name, err)
+		} else {
+			logrus.Infof("object %s has owner(s) and the owner(s) are valid - skipping", req.Name)
+			return nil, resource, nil
 		}
-		originalObject = pod
 	} else {
-		pod, originalObject, err = GetObjectFromRawRequest(req.Object.Raw)
+		logrus.Infof("Object %s has no owner - running checks", req.Name)
 	}
-	controller, err := kube.NewGenericResourceFromPod(pod, originalObject)
+
+	resource, err = kube.NewGenericResourceFromBytes(req.Object.Raw)
 	if err != nil {
-		return nil, err
+		logrus.Errorf("Failed to create resource: %v", err)
+		return nil, resource, err
 	}
-	controller.Kind = req.AdmissionRequest.Kind.Kind
-	var controllerResult validator.Result
-	controllerResult, err = validator.ApplyAllSchemaChecks(&v.Config, controller)
+	resourceResult, err := validator.ApplyAllSchemaChecks(ctx, &config, nil, resource)
 	if err != nil {
-		return nil, err
+		return nil, resource, err
 	}
-	return controllerResult.PodResult, nil
+	return &resourceResult, resource, nil
 }
 
 // Handle for Validator to run validation checks.
 func (v *Validator) Handle(ctx context.Context, req admission.Request) admission.Response {
-	logrus.Info("Starting request")
-	podResult, err := v.handleInternal(req)
+	logrus.Info("Starting admission request")
+	result, _, err := v.handleInternal(ctx, req)
 	if err != nil {
 		logrus.Errorf("Error validating request: %v", err)
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 	allowed := true
 	reason := ""
-	if podResult != nil {
-		numDangers := podResult.GetSummary().Dangers
+	if result != nil {
+		numDangers := result.GetSummary().Dangers
 		if numDangers > 0 {
 			allowed = false
-			reason = getFailureReason(*podResult)
+			reason = getFailureReason(*result)
 		}
-		logrus.Infof("%d validation errors found when validating %s", numDangers, podResult.Name)
+		logrus.Infof("%d validation errors found when validating %s", numDangers, result.Name)
 	}
 	return admission.ValidationResponse(allowed, reason)
 }
 
-func getFailureReason(podResult validator.PodResult) string {
-	reason := "\nPolaris prevented this deployment due to configuration problems:\n"
+func getFailureReason(result validator.Result) string {
+	var reason strings.Builder
+	reason.WriteString("\nPolaris prevented this deployment due to configuration problems:\n")
 
-	for _, message := range podResult.Results {
+	for _, message := range result.Results {
 		if !message.Success && message.Severity == config.SeverityDanger {
-			reason += fmt.Sprintf("- Pod: %s\n", message.Message)
+			reason.WriteString("- " + result.Kind + ": " + message.Message + "\n")
 		}
 	}
 
-	for _, containerResult := range podResult.ContainerResults {
-		for _, message := range containerResult.Results {
+	podResult := result.PodResult
+	if podResult != nil {
+		for _, message := range podResult.Results {
 			if !message.Success && message.Severity == config.SeverityDanger {
-				reason += fmt.Sprintf("- Container %s: %s\n", containerResult.Name, message.Message)
+				reason.WriteString("- Pod: " + message.Message + "\n")
+			}
+		}
+
+		for _, containerResult := range podResult.ContainerResults {
+			for _, message := range containerResult.Results {
+				if !message.Success && message.Severity == config.SeverityDanger {
+					reason.WriteString("- Container " + containerResult.Name + ": " + message.Message + "\n")
+				}
 			}
 		}
 	}
 
-	return reason
+	return reason.String()
 }

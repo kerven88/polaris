@@ -17,13 +17,15 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
+	"os/exec"
 
-	conf "github.com/fairwindsops/polaris/pkg/config"
+	cfg "github.com/fairwindsops/polaris/pkg/config"
 	"github.com/fairwindsops/polaris/pkg/kube"
 	"github.com/fairwindsops/polaris/pkg/validator"
 	"github.com/sirupsen/logrus"
@@ -31,14 +33,23 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-var setExitCode bool
-var onlyShowFailedTests bool
-var minScore int
-var auditOutputURL string
-var auditOutputFile string
-var auditOutputFormat string
-var resourceToAudit string
-var useColor bool
+var (
+	setExitCode         bool
+	onlyShowFailedTests bool
+	minScore            int
+	auditOutputURL      string
+	auditOutputFile     string
+	auditOutputFormat   string
+	resourceToAudit     string
+	useColor            bool
+	helmChart           string
+	helmValues          []string
+	helmSkipTests       bool
+	checks              []string
+	auditNamespace      string
+	severityLevel       string
+	skipSslValidation   bool
+)
 
 func init() {
 	rootCmd.AddCommand(auditCmd)
@@ -52,6 +63,13 @@ func init() {
 	auditCmd.PersistentFlags().BoolVar(&useColor, "color", true, "Whether to use color in pretty format.")
 	auditCmd.PersistentFlags().StringVar(&displayName, "display-name", "", "An optional identifier for the audit.")
 	auditCmd.PersistentFlags().StringVar(&resourceToAudit, "resource", "", "Audit a specific resource, in the format namespace/kind/version/name, e.g. nginx-ingress/Deployment.apps/v1/default-backend.")
+	auditCmd.PersistentFlags().StringVar(&helmChart, "helm-chart", "", "Will fill out Helm template")
+	auditCmd.PersistentFlags().StringSliceVar(&helmValues, "helm-values", []string{}, "Optional flag to add helm values")
+	auditCmd.PersistentFlags().BoolVar(&helmSkipTests, "helm-skip-tests", false, "Corresponds to --skip-tests of helm template")
+	auditCmd.PersistentFlags().StringSliceVar(&checks, "checks", []string{}, "Optional flag to specify specific checks to check")
+	auditCmd.PersistentFlags().StringVar(&auditNamespace, "namespace", "", "Namespace to audit. Only applies to in-cluster audits")
+	auditCmd.PersistentFlags().StringVar(&severityLevel, "severity", "", "Severity level used to filter results. Behaves like log levels. 'danger' is the least verbose (warning, danger)")
+	auditCmd.PersistentFlags().BoolVar(&skipSslValidation, "skip-ssl-validation", false, "Skip https certificate verification")
 }
 
 var auditCmd = &cobra.Command{
@@ -62,8 +80,49 @@ var auditCmd = &cobra.Command{
 		if displayName != "" {
 			config.DisplayName = displayName
 		}
+		if len(checks) > 0 {
+			targetChecks := make(map[string]bool)
+			for _, check := range checks {
+				targetChecks[check] = true
+			}
+			for key := range config.Checks {
+				if isTarget := targetChecks[key]; !isTarget {
+					config.Checks[key] = cfg.SeverityIgnore
+				}
+			}
+		}
+		if auditNamespace != "" {
+			if helmChart != "" {
+				logrus.Warn("--namespace and --helm-chart are mutually exclusive. --namespace will be ignored.")
+			}
+			if auditPath != "" {
+				logrus.Warn("--namespace and --audit-path are mutually exclusive. --namespace will be ignored.")
+			}
+			config.Namespace = auditNamespace
+		}
+		if helmChart != "" {
+			var err error
+			auditPath, err = ProcessHelmTemplates(helmChart, helmValues, helmSkipTests)
+			if err != nil {
+				logrus.Errorf("Couldn't process helm chart: %v", err)
+				os.Exit(1)
+			}
+		}
 
-		auditData := runAndReportAudit(cmd.Context(), config, auditPath, resourceToAudit, auditOutputFile, auditOutputURL, auditOutputFormat, useColor)
+		ctx := context.TODO()
+		k, err := kube.CreateResourceProvider(ctx, auditPath, resourceToAudit, config)
+		if err != nil {
+			logrus.Errorf("Error fetching Kubernetes resources %v", err)
+			os.Exit(1)
+		}
+
+		auditData, err := validator.RunAudit(context.Background(), config, k)
+		if err != nil {
+			logrus.Errorf("Error while running audit on resources: %v", err)
+			os.Exit(1)
+		}
+
+		outputAudit(auditData, auditOutputFile, auditOutputURL, auditOutputFormat, useColor, onlyShowFailedTests, severityLevel)
 
 		summary := auditData.GetSummary()
 		score := summary.GetScore()
@@ -77,32 +136,71 @@ var auditCmd = &cobra.Command{
 	},
 }
 
-func runAndReportAudit(ctx context.Context, c conf.Configuration, auditPath, workload, outputFile, outputURL, outputFormat string, useColor bool) validator.AuditData {
-	// Create a kubernetes client resource provider
-	k, err := kube.CreateResourceProvider(ctx, auditPath, workload, c)
+// ProcessHelmTemplates turns helm into yaml to be processed by Polaris or the other tools.
+func ProcessHelmTemplates(helmChart string, helmValues []string, helmSkipTests bool) (string, error) {
+	cmd := exec.Command("helm", "dependency", "update", helmChart)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		logrus.Errorf("Error fetching Kubernetes resources %v", err)
-		os.Exit(1)
+		logrus.Error(string(output))
+		return "", err
 	}
-	var auditData validator.AuditData
-	auditData, err = validator.RunAudit(c, k, onlyShowFailedTests)
+
+	dir, err := os.MkdirTemp("", "*")
+	if err != nil {
+		return "", err
+	}
+	params := []string{
+		"template", helmChart,
+		"--generate-name",
+		"--output-dir",
+		dir,
+	}
+	for _, v := range helmValues {
+		params = append(params, "--values", v)
+	}
+
+	if helmSkipTests {
+		params = append(params, "--skip-tests")
+	}
+
+	cmd = exec.Command("helm", params...)
+	output, err = cmd.CombinedOutput()
 
 	if err != nil {
-		logrus.Errorf("Error while running audit on resources: %v", err)
-		os.Exit(1)
+		logrus.Error(string(output))
+		return "", err
+	}
+	return dir, nil
+}
+
+func outputAudit(auditData validator.AuditData, outputFile, outputURL, outputFormat string, useColor bool, onlyShowFailedTests bool, severityLevel string) {
+	if onlyShowFailedTests {
+		auditData = auditData.RemoveSuccessfulResults()
+	}
+
+	if severityLevel != "" {
+		switch severityLevel {
+		case "danger":
+			auditData = auditData.FilterResultsBySeverityLevel(cfg.SeverityDanger)
+		case "warning":
+			auditData = auditData.FilterResultsBySeverityLevel(cfg.SeverityWarning)
+		}
 	}
 
 	var outputBytes []byte
-	if outputFormat == "score" {
-		outputBytes = []byte(fmt.Sprintf("%d\n", auditData.GetSummary().GetScore()))
-	} else if outputFormat == "yaml" {
-		jsonBytes, err := json.Marshal(auditData)
+	var err error
+	switch outputFormat {
+	case "score":
+		outputBytes = fmt.Appendf(nil, "%d\n", auditData.GetSummary().GetScore())
+	case "yaml":
+		var jsonBytes []byte
+		jsonBytes, err = json.Marshal(auditData)
 		if err == nil {
 			outputBytes, err = yaml.JSONToYAML(jsonBytes)
 		}
-	} else if outputFormat == "pretty" {
+	case "pretty":
 		outputBytes = []byte(auditData.GetPrettyOutput(useColor))
-	} else {
+	default:
 		outputBytes, err = json.MarshalIndent(auditData, "", "  ")
 	}
 	if err != nil {
@@ -110,7 +208,10 @@ func runAndReportAudit(ctx context.Context, c conf.Configuration, auditPath, wor
 		os.Exit(1)
 	}
 	if outputURL == "" && outputFile == "" {
-		os.Stdout.Write(outputBytes)
+		if _, err := os.Stdout.Write(outputBytes); err != nil {
+			logrus.Errorf("Error writing audit to stdout: %v", err)
+			os.Exit(1)
+		}
 	} else {
 		if outputURL != "" {
 			req, err := http.NewRequest("POST", outputURL, bytes.NewBuffer(outputBytes))
@@ -120,24 +221,33 @@ func runAndReportAudit(ctx context.Context, c conf.Configuration, auditPath, wor
 				os.Exit(1)
 			}
 
-			if outputFormat == "json" {
+			switch outputFormat {
+			case "json":
 				req.Header.Set("Content-Type", "application/json")
-			} else if outputFormat == "yaml" {
+			case "yaml":
 				req.Header.Set("Content-Type", "application/x-yaml")
-			} else {
+			default:
 				req.Header.Set("Content-Type", "text/plain")
 			}
-			client := &http.Client{}
-			resp, err := client.Do(req)
 
+			client := &http.Client{}
+			if skipSslValidation {
+				transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+				client = &http.Client{Transport: transport}
+			}
+			resp, err := client.Do(req)
 			if err != nil {
 				logrus.Errorf("Error making request for output: %v", err)
 				os.Exit(1)
 			}
 
-			defer resp.Body.Close()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					logrus.Errorf("Error closing response body: %v", err)
+				}
+			}()
 
-			body, err := ioutil.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
 
 			if err != nil {
 				logrus.Errorf("Error reading response: %v", err)
@@ -148,12 +258,11 @@ func runAndReportAudit(ctx context.Context, c conf.Configuration, auditPath, wor
 		}
 
 		if outputFile != "" {
-			err := ioutil.WriteFile(outputFile, []byte(outputBytes), 0644)
+			err := os.WriteFile(outputFile, outputBytes, 0644)
 			if err != nil {
 				logrus.Errorf("Error writing output to file: %v", err)
 				os.Exit(1)
 			}
 		}
 	}
-	return auditData
 }

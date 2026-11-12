@@ -1,3 +1,8 @@
+---
+meta:
+  - name: description
+    content: "Fairwinds Polaris | Ways to run Polaris | The Polaris dashboard can be installed on a cluster using kubectl or Helm"
+---
 # Dashboard
 
 > Want to see Polaris results for all your clusters in a single dashboard? Check out
@@ -11,15 +16,10 @@ don't conform to best practices.
 
 ## Installation
 
-### kubectl
-```bash
-kubectl apply -f https://github.com/fairwindsops/polaris/releases/latest/download/dashboard.yaml
-kubectl port-forward --namespace polaris svc/polaris-dashboard 8080:80
-```
 ### Helm
 ```bash
 helm repo add fairwinds-stable https://charts.fairwinds.com/stable
-helm upgrade --install polaris fairwinds-stable/polaris --namespace polaris
+helm upgrade --install polaris fairwinds-stable/polaris --namespace polaris --create-namespace
 kubectl port-forward --namespace polaris svc/polaris-dashboard 8080:80
 ```
 
@@ -42,7 +42,7 @@ polaris dashboard --port 8080 --audit-path=./deploy/
 ### Local Docker container
 
 ```
-docker run -d -p8080:8080 -v ~/.kube/config:/opt/app/config:ro  quay.io/fairwinds/polaris:1.2 polaris dashboard --kubeconfig /opt/app/config
+docker run -d -p8080:8080 -v ~/.kube/config:/opt/app/config:ro  us-docker.pkg.dev/fairwinds-ops/oss/polaris:1.2 polaris dashboard --kubeconfig /opt/app/config
 ```
 
 ##  Using the Dashboard

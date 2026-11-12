@@ -1,6 +1,176 @@
 ---
 sidebarDepth: 0
+meta:
+  - name: description
+    content: "Fairwinds Polaris | Changelog"
+
 ---
+
+## 9.1.1
+* Fix `hpaMinAvailability` failure message
+* Fix `missingPodDisruptionBudget` typo
+* Rewrite `hpaMaxAvailability` check to use go-template
+
+## 9.1.0
+* Add HPA `minAvailable` and HPA `maxAvailable` checks 
+* Fix typo for PDB `minAvailable`
+
+## 9.0.1
+* Fix comments handling in `addOrReplaceValue` function
+
+## 9.0.0
+* Expose issue fixer and mutations in the library
+* Remove `packr` in favor of `go:embed`
+
+## 8.5.6
+* Fix trying to list cluster-level resources
+
+## 8.5.5
+* Fix missing PDB check
+
+## 8.5.4
+* Fix conditional expressions should be at very top of `additionalSchemaStrings`
+* Update alpine to 3.19
+
+## 8.5.3
+* Add quiet flag to polaris audit CLI command to suppress 'upload to Insights' prompt
+
+## 8.5.2
+* Switch to `controller-utils` package to get workloads
+
+## 8.5.1
+* Update `topologySpreadConstraint` check
+
+## 8.5.0
+* Add helm-skip-tests flag
+* Update CLI docs
+* Handle multiple helm-values files
+
+## 8.4.0
+* Change kubernetes.io/ label from name to instance
+
+## 8.3.0
+* Add option to filter audit results by severity level
+* Add insights prompt
+
+## 8.2.4
+* Fix nil pointer issue with webhook
+
+## 8.2.3
+* Add category for `metadataAndNameMismatched`.
+* Fix category for `priorityClassNotSet`.
+
+## 8.2.2
+* Fix webhook server cert dir argument
+
+## 8.2.1
+* Fix on Insights integration
+
+## 8.2.0
+* Minor fixes for NSA checks
+
+## 8.1.0
+* Add `insights-host` global flag to configure Fairwinds Insights host (defaults to `https://insights.fairwinds.com`).
+* Add new `auth` sub-commands be able to authenticate on Polaris using Fairwinds Insights credentials
+  - `login` - login using Fairwinds Insights credentials via the web interface or provide a token
+  - `logout` - logout from Fairwinds Insights
+  - `status` - show relevant information regarding login state
+  - `token` - prints the token from local storage
+* Add new `audit` flags to be able to upload Workloads and Polaris results to Fairwinds Insights
+  - `upload-insights` - indicates that the results should be uploaded to Fairwinds Insights. (defaults to `false`)
+  - `cluster-name`  - cluster name that the results belongs to. Creates the cluster if it does not exist. (required if `upload-insights` is used) 
+
+
+## 8.0.0
+* Change default severity from `ignore` to `warning` for `priorityClassNotSet`, `metadataAndNameMismatched`, `missingPodDisruptionBudget`, `automountServiceAccountToken`, `missingNetworkPolicy` checks.
+* Change default severity from `warning` to `danger` for `sensitiveContainerEnvVar`, `sensitiveConfigmapContent`, `clusterrolePodExecAttach`, `rolePodExecAttach`, `clusterrolebindingPodExecAttach`, `rolebindingClusterRolePodExecAttach`, `rolebindingRolePodExecAttach`,`clusterrolebindingClusterAdmin`,`rolebindingClusterAdminClusterRole`,`rolebindingClusterAdminRole` checks.
+
+## 7.4.0
+* Skip https certificate verification (#920)
+
+## 7.3.0
+* Add a check for `topologySpreadConstraint` (#879)
+
+## 7.2.0
+* Enable new RBAC / sensitive content / Pod exec checks, add `hasPrefix` and `hasSuffix` functions to the GO template, exempt `system:` name prefixes for RBAC checks, sensitive content checks ignore `valueFrom`, (#832)
+
+## 7.1.0
+* Let Polaris modify YAML without losing comments/formatting (#821)
+* Add checks for RBAC allowing exec or attaching to a Pod (#820)
+* Add `clusterrolebindingClusterAdmin`, `rolebindingClusterAdminRole`, and `rolebindingClusterAdminClusterRole` checks + schema tests (#823)
+
+## 7.0.2
+* Fixes for pretty CLI output
+* Some new checks (disabled by default)
+* Some additional features in templating engine
+
+## 7.0.1
+* Documentation updates
+
+## 7.0.0
+* Better support for `polaris fix`
+* `target: Pod` is now `target: PodSpec` (to differentiate naked Pods from Controllers)
+
+## 6.0.0
+* Preliminary support for `polaris fix` command
+* Changes to how Pod owners are determined
+* Removed YAML manifests from the `deploy/` directory - Helm is now the default install mechanism
+
+## 5.1.0
+* Support `--context` flag for kubecontext
+* Treat core Kubernetes controllers (`Deployments`, `StatefulSets`, `DaemonSets`, `CronJobs`) as top-level objects, instead of following owner refs
+
+## 5.0.0
+* Renamed `multipleReplicasForDeployment` to `deploymentMissingReplicas`
+* Changed `RunAsRootAllowed` and `hostNetworkSet` default severity to `danger`
+* Changed `deploymentMissingReplicas` default severity to `warning`
+
+## 4.2.0
+* New flags `--disallow-(config|annotation)-exemptions`
+* Kubernetes dependency updates
+* Documentation updates
+## 4.1.0
+* Handle case-insentitivity in capabilities checks
+* Change test for PDB disruptions to better handle IaC
+
+## 4.0.9
+* Update Alpine base image
+
+## 4.0.8
+* Fix support for namespace checks
+
+## 4.0.7
+* Fix goreleaser format
+
+## 4.0.6
+* Change goreleaser format
+* Fix `--helm-values` flag
+
+## 4.0.5
+* Bugfix for repeated objects on the dashboard
+
+## 4.0.4
+* Bugfix for validating webhook and non-pod checks
+
+## 4.0.3
+* Fixed bad interaction between `--set-exit-score-below` and `--only-show-failed-tests`
+* Dependency updates
+* Support for Helm chart scanning
+
+## 4.0.2
+* Goreleaser fix
+
+## 4.0.1
+* Goreleaser fix
+
+## 4.0.0
+* Add support for arbitrary resources, like Ingress or PodDisruptionBudget
+* Add support check templating (see docs)
+* Add support for multi-resource checks (see docs)
+
+### Breaking Changes
+* In custom checks, `jsonSchema` is now `schemaString`
+* Check `pdbDisruptionsAllowedGreaterThanZero` is now called `pdbDisruptionsIsZero`
 
 ## 3.2.0
 * Add `--format=pretty` option for CLI output
@@ -81,7 +251,7 @@ JSON schema (see changes to `./checks/multipleReplicasForDeployment.yaml`)
 * Docker image now includes the default config
 
 ### Breaking Changes
-* Breaking changes in both input and output formats. See [Examples](https://github.com/FairwindsOps/polaris/tree/master/examples) for examples of the new formats.
+* Breaking changes in both input and output formats. See [Examples](https://github.com/FairwindsOps/polaris/tree/master/pkg/config/examples) for examples of the new formats.
     * removed config-level configuration for checks like max/min memory settings
     * changed severity `error` to `danger`
 * Breaking changes to the CLI

@@ -15,6 +15,7 @@
 package validator
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -29,23 +30,24 @@ import (
 func TestValidatePDB(t *testing.T) {
 	c := conf.Configuration{
 		Checks: map[string]conf.Severity{
-			"pdbDisruptionsAllowedGreaterThanZero": conf.SeverityWarning,
+			"pdbDisruptionsIsZero": conf.SeverityWarning,
 		},
 	}
 	pdb := unstructured.Unstructured{}
-	res, err := kube.NewGenericResourceFromUnstructured(&pdb)
+	res, err := kube.NewGenericResourceFromUnstructured(pdb, nil)
+	assert.NoError(t, err)
 	res.Kind = "PodDisruptionBudget"
 
-	actualResult, err := applyNonControllerSchemaChecks(&c, res)
+	actualResult, err := applyNonControllerSchemaChecks(context.Background(), &c, nil, res)
 	if err != nil {
 		panic(err)
 	}
-	results := actualResult.Results["pdbDisruptionsAllowedGreaterThanZero"]
+	results := actualResult.Results["pdbDisruptionsIsZero"]
 
 	assert.False(t, results.Success)
 	assert.Equal(t, conf.SeverityWarning, results.Severity)
 	assert.Equal(t, "Reliability", results.Category)
-	assert.EqualValues(t, "disruptionsAllowed is not greater than zero", results.Message)
+	assert.EqualValues(t, "Voluntary evictions are not possible", results.Message)
 }
 
 func TestValidateIngress(t *testing.T) {
@@ -70,13 +72,13 @@ func TestValidateIngress(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	res, err := kube.NewGenericResourceFromUnstructured(&unst)
+	res, err := kube.NewGenericResourceFromUnstructured(unst, nil)
 	if err != nil {
 		panic(err)
 	}
 	res.Kind = "Ingress"
 
-	actualResult, err := applyNonControllerSchemaChecks(&c, res)
+	actualResult, err := applyNonControllerSchemaChecks(context.Background(), &c, nil, res)
 	if err != nil {
 		panic(err)
 	}

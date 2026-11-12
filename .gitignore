@@ -1,4 +1,6 @@
-# Binaries for programs and plugins
+# dist
+# # Binaries for programs and plugins
+.go-version
 *.exe
 *.exe~
 *.dll
@@ -19,7 +21,6 @@ Tiltfile
 main
 .DS_Store
 
-*-packr.go
 dist
 .vscode
 
@@ -27,3 +28,7 @@ dist
 
 node_modules
 /dist
+docs/README.md
+docs/index.md
+docs/.vitepress/cache
+docs/.vitepress/dist

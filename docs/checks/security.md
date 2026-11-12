@@ -1,3 +1,8 @@
+---
+meta:
+  - name: description
+    content: "Fairwinds Polaris | Security Checks Documentation"
+---
 # Security
 
 These checks are related to security concerns. Workloads that fail these
@@ -6,17 +11,30 @@ for privilege escalation.
 
 key | default | description
 ----|---------|------------
+`automountServiceAccountToken` | `warning` | Fails when `automountServiceAccountToken` is automounted.
 `hostIPCSet` | `danger` | Fails when `hostIPC` attribute is configured.
 `hostPIDSet` | `danger` | Fails when `hostPID` attribute is configured.
+`linuxHardening` | `danger` | Fails when neither `AppArmor`, `Seccomp`, `SELinux`, or dropping Linux Capabilities is in use.
 `notReadOnlyRootFilesystem` | `warning` | Fails when `securityContext.readOnlyRootFilesystem` is not true.
 `privilegeEscalationAllowed` | `danger` | Fails when `securityContext.allowPrivilegeEscalation` is true.
 `runAsRootAllowed` | `warning` | Fails when `securityContext.runAsNonRoot` is not true.
 `runAsPrivileged` | `danger` | Fails when `securityContext.privileged` is true.
-`insecureCapabilities` | `warning` | Fails when `securityContext.capabilities` includes one of the capabilities [listed here](https://github.com/FairwindsOps/polaris/tree/master/checks/insecureCapabilities.yaml)
-`dangerousCapabilities` | `danger` | Fails when `securityContext.capabilities` includes one of the capabilities [listed here](https://github.com/FairwindsOps/polaris/tree/master/checks/dangerousCapabilities.yaml)
+`insecureCapabilities` | `warning` | Fails when `securityContext.capabilities` includes one of the capabilities [listed here](https://github.com/FairwindsOps/polaris/tree/master/pkg/config/checks/insecureCapabilities.yaml)
+`dangerousCapabilities` | `danger` | Fails when `securityContext.capabilities` includes one of the capabilities [listed here](https://github.com/FairwindsOps/polaris/tree/master/pkg/config/checks/dangerousCapabilities.yaml)
 `hostNetworkSet` | `warning` | Fails when `hostNetwork` attribute is configured.
 `hostPortSet` | `warning` | Fails when `hostPort` attribute is configured.
 `tlsSettingsMissing` | `warning` | Fails when an Ingress lacks TLS settings.
+`sensitiveContainerEnvVar` | `danger` | Fails when the container sets potentially sensitive environment variables.
+`sensitiveConfigmapContent` | `danger` | Fails when potentially sensitive content is detected in the ConfigMap keys or values.
+`missingNetworkPolicy` | `warning`
+`clusterrolePodExecAttach` | `danger` | Fails when the ClusterRole allows Pods/exec or pods/attach.
+`rolePodExecAttach` | `danger` | Fails when the Role allows Pods/exec or pods/attach.
+`clusterrolebindingPodExecAttach` | `danger` | Fails when the ClusterRoleBinding references a ClusterRole that allows Pods/exec, allows pods/attach, or that does not exist.
+`rolebindingRolePodExecAttach` | `danger` | Fails when the RoleBinding references a Role that allows Pods/exec, allows pods/attach, or that does not exist.
+`rolebindingClusterRolePodExecAttach` | `danger` | Fails when the RoleBinding references a ClusterRole that allows Pods/exec, allows pods/attach, or that does not exist.
+`clusterrolebindingClusterAdmin` | `danger` | Fails when the ClusterRoleBinding references the default cluster-admin ClusterRole or one with wildcard permissions.
+`rolebindingClusterAdminClusterRole` | `danger` | Fails when the RoleBinding references the default cluster-admin ClusterRole or one with wildcard permissions.
+`rolebindingClusterAdminRole` | `danger` | Fails when the RoleBinding references a Role with wildcard permissions.
 
 ## Background
 

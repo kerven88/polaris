@@ -49,7 +49,7 @@ func TestValidateController(t *testing.T) {
 	}
 
 	var actualResult Result
-	actualResult, err = applyControllerSchemaChecks(&c, deployment)
+	actualResult, err = applyControllerSchemaChecks(context.Background(), &c, nil, deployment)
 	if err != nil {
 		panic(err)
 	}
@@ -64,16 +64,16 @@ func TestControllerLevelChecks(t *testing.T) {
 	testResources := func(res *kube.ResourceProvider) {
 		c := conf.Configuration{
 			Checks: map[string]conf.Severity{
-				"multipleReplicasForDeployment": conf.SeverityDanger,
+				"deploymentMissingReplicas": conf.SeverityDanger,
 			},
 		}
 		expectedResult := ResultMessage{
-			ID:       "multipleReplicasForDeployment",
+			ID:       "deploymentMissingReplicas",
 			Severity: "danger",
 			Category: "Reliability",
 		}
 		for _, controller := range res.Resources["Deployment"] {
-			actualResult, err := applyControllerSchemaChecks(&c, controller)
+			actualResult, err := applyControllerSchemaChecks(context.Background(), &c, nil, controller)
 			if err != nil {
 				panic(err)
 			}
@@ -85,7 +85,7 @@ func TestControllerLevelChecks(t *testing.T) {
 				expectedResult.Message = "Only one replica is scheduled"
 			}
 			expectedResults := ResultSet{
-				"multipleReplicasForDeployment": expectedResult,
+				"deploymentMissingReplicas": expectedResult,
 			}
 
 			assert.Equal(t, "Deployment", actualResult.Kind)
@@ -96,20 +96,21 @@ func TestControllerLevelChecks(t *testing.T) {
 
 	res, err := kube.CreateResourceProviderFromPath("../kube/test_files/test_1")
 	assert.Equal(t, nil, err, "Error should be nil")
-	assert.Equal(t, 11, res.Resources.GetLength())
+	assert.Equal(t, 10, res.Resources.GetLength())
 	testResources(res)
 
-	replicaSpec := map[string]interface{}{"replicas": 2}
+	replicaSpec := map[string]any{"replicas": 2}
 	b, err := json.Marshal(replicaSpec)
 	assert.NoError(t, err)
 	err = json.Unmarshal(b, &replicaSpec)
+	assert.NoError(t, err)
 
 	d1, p1 := test.MockDeploy("test", "test-deployment")
 	d2, p2 := test.MockDeploy("test", "test-deployment-2")
 	two := int32(2)
 	d2.Spec.Replicas = &two
 	k8s, dynamicClient := test.SetupTestAPI(&d1, &p1, &d2, &p2)
-	res, err = kube.CreateResourceProviderFromAPI(context.Background(), k8s, "test", &dynamicClient, conf.Configuration{})
+	res, err = kube.CreateResourceProviderFromAPI(context.Background(), k8s, "test", dynamicClient, conf.Configuration{})
 	assert.Equal(t, err, nil, "error should be nil")
 	assert.Equal(t, 2, res.Resources.GetLength(), "Should have two controllers")
 	testResources(res)
@@ -137,7 +138,7 @@ func TestSkipHealthChecks(t *testing.T) {
 		"livenessProbeMissing":  {ID: "livenessProbeMissing", Message: "Liveness probe should be configured", Success: false, Severity: "warning", Category: "Reliability"},
 	}
 	var actualResult Result
-	actualResult, err = applyControllerSchemaChecks(&c, deployment)
+	actualResult, err = applyControllerSchemaChecks(context.Background(), &c, nil, deployment)
 	if err != nil {
 		panic(err)
 	}
@@ -156,7 +157,7 @@ func TestSkipHealthChecks(t *testing.T) {
 		Dangers:   uint(0),
 	}
 	expectedResults = ResultSet{}
-	actualResult, err = applyControllerSchemaChecks(&c, job)
+	actualResult, err = applyControllerSchemaChecks(context.Background(), &c, nil, job)
 	if err != nil {
 		panic(err)
 	}
@@ -174,7 +175,7 @@ func TestSkipHealthChecks(t *testing.T) {
 		Dangers:   uint(0),
 	}
 	expectedResults = ResultSet{}
-	actualResult, err = applyControllerSchemaChecks(&c, cronjob)
+	actualResult, err = applyControllerSchemaChecks(context.Background(), &c, nil, cronjob)
 	if err != nil {
 		panic(err)
 	}
@@ -203,14 +204,14 @@ func TestControllerExemptions(t *testing.T) {
 	}
 
 	pod := test.MockPod()
-	pod.ObjectMeta.Namespace = "foo"
+	pod.Namespace = "foo"
 	workload, err := kube.NewGenericResourceFromPod(pod, nil)
 	assert.NoError(t, err)
 	workload.Kind = "Deployment"
 	resources := []kube.GenericResource{workload}
 
 	var actualResults []Result
-	actualResults, err = ApplyAllSchemaChecksToAllResources(&c, resources)
+	actualResults, err = ApplyAllSchemaChecksToAllResources(context.Background(), &c, nil, resources)
 	if err != nil {
 		panic(err)
 	}
@@ -221,7 +222,7 @@ func TestControllerExemptions(t *testing.T) {
 	c.Exemptions = []conf.Exemption{{
 		Namespace: "foo",
 	}}
-	actualResults, err = ApplyAllSchemaChecksToAllResources(&c, resources)
+	actualResults, err = ApplyAllSchemaChecksToAllResources(context.Background(), &c, nil, resources)
 	if err != nil {
 		panic(err)
 	}
@@ -233,7 +234,7 @@ func TestControllerExemptions(t *testing.T) {
 	resources[0].ObjectMeta.SetAnnotations(map[string]string{
 		exemptionAnnotationKey: "true",
 	})
-	actualResults, err = ApplyAllSchemaChecksToAllResources(&c, resources)
+	actualResults, err = ApplyAllSchemaChecksToAllResources(context.Background(), &c, nil, resources)
 	if err != nil {
 		panic(err)
 	}
@@ -242,7 +243,7 @@ func TestControllerExemptions(t *testing.T) {
 	assert.EqualValues(t, expectedExemptSum, actualResults[0].GetSummary())
 
 	c.DisallowExemptions = true
-	actualResults, err = ApplyAllSchemaChecksToAllResources(&c, resources)
+	actualResults, err = ApplyAllSchemaChecksToAllResources(context.Background(), &c, nil, resources)
 	if err != nil {
 		panic(err)
 	}

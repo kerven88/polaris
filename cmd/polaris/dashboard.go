@@ -15,6 +15,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -54,9 +55,15 @@ var dashboardCmd = &cobra.Command{
 			auditData := validator.ReadAuditFromFile(loadAuditFile)
 			auditDataPtr = &auditData
 		}
-		router := dashboard.GetRouter(config, auditPath, serverPort, basePath, auditDataPtr)
+		router, err := dashboard.GetRouter(context.Background(), config, auditPath, serverPort, basePath, auditDataPtr)
+		if err != nil {
+			logrus.Fatalf("error creating router: %v", err)
+		}
+
 		router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("OK"))
+			if _, err := w.Write([]byte("OK")); err != nil {
+				logrus.Errorf("Error writing health response: %v", err)
+			}
 		})
 		http.Handle("/", router)
 

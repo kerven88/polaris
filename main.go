@@ -15,12 +15,14 @@
 package main
 
 import (
-	"github.com/fairwindsops/polaris/cmd/polaris"
+	cmd "github.com/fairwindsops/polaris/cmd/polaris"
 )
 
-const (
-	// Version represents the current release version of Polaris
-	Version = "3.2.0"
+var (
+	// Version is set during build
+	Version = "development"
+	// Commit is set during build
+	Commit = ""
 )
 
 func main() {

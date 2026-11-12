@@ -16,17 +16,18 @@ package dashboard
 
 import (
 	"bytes"
+	"context"
+	"embed"
 	"encoding/json"
 	"html/template"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"path"
-	"strings"
 
 	"github.com/fairwindsops/polaris/pkg/config"
 	"github.com/fairwindsops/polaris/pkg/kube"
 	"github.com/fairwindsops/polaris/pkg/validator"
-	packr "github.com/gobuffalo/packr/v2"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 )
@@ -47,26 +48,11 @@ const (
 )
 
 var (
-	templateBox = (*packr.Box)(nil)
-	assetBox    = (*packr.Box)(nil)
-	markdownBox = (*packr.Box)(nil)
+	//go:embed all:templates
+	templatesFS embed.FS
+	//go:embed all:assets
+	assetsFS embed.FS
 )
-
-// GetAssetBox returns a binary-friendly set of assets packaged from disk
-func GetAssetBox() *packr.Box {
-	if assetBox == (*packr.Box)(nil) {
-		assetBox = packr.New("Assets", "assets")
-	}
-	return assetBox
-}
-
-// GetTemplateBox returns a binary-friendly set of templates for rendering the dash
-func GetTemplateBox() *packr.Box {
-	if templateBox == (*packr.Box)(nil) {
-		templateBox = packr.New("Templates", "templates")
-	}
-	return templateBox
-}
 
 // templateData is passed to the dashboard HTML template
 type templateData struct {
@@ -103,9 +89,8 @@ func GetBaseTemplate(name string) (*template.Template, error) {
 }
 
 func parseTemplateFiles(tmpl *template.Template, templateFileNames []string) (*template.Template, error) {
-	templateBox := GetTemplateBox()
 	for _, fname := range templateFileNames {
-		templateFile, err := templateBox.Find(fname)
+		templateFile, err := templatesFS.ReadFile("templates/" + fname)
 		if err != nil {
 			return nil, err
 		}
@@ -125,18 +110,24 @@ func writeTemplate(tmpl *template.Template, data *templateData, w http.ResponseW
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	buf.WriteTo(w)
+	if _, err := buf.WriteTo(w); err != nil {
+		logrus.Errorf("Error writing template: %v", err)
+	}
 }
 
 func getConfigForQuery(base config.Configuration, query url.Values) config.Configuration {
 	c := base
-	exemptions := query.Get("disallowExemptions")
-	if exemptions == "false" {
-		c.DisallowExemptions = false
-	}
-	if exemptions == "true" {
+	switch query.Get("disallowExemptions") {
+	case "true":
 		c.DisallowExemptions = true
+		c.DisallowConfigExemptions = true
+		c.DisallowAnnotationExemptions = true
+	default:
+		c.DisallowExemptions = false
+		c.DisallowConfigExemptions = false
+		c.DisallowAnnotationExemptions = false
 	}
+
 	return c
 }
 
@@ -151,23 +142,33 @@ func stripUnselectedNamespaces(data *validator.AuditData, selectedNamespaces []s
 }
 
 // GetRouter returns a mux router serving all routes necessary for the dashboard
-func GetRouter(c config.Configuration, auditPath string, port int, basePath string, auditData *validator.AuditData) *mux.Router {
+func GetRouter(ctx context.Context, c config.Configuration, auditPath string, port int, basePath string, auditData *validator.AuditData) (*mux.Router, error) {
 	router := mux.NewRouter().PathPrefix(basePath).Subrouter()
-	fileServer := http.FileServer(GetAssetBox())
+
+	assetsSubFS, err := fs.Sub(assetsFS, "assets")
+	if err != nil {
+		return nil, err
+	}
+
+	fileServer := http.FileServer(http.FS(assetsSubFS))
 	router.PathPrefix("/static/").Handler(http.StripPrefix(path.Join(basePath, "/static/"), fileServer))
 
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("OK"))
+		if _, err := w.Write([]byte("OK")); err != nil {
+			logrus.Errorf("Error writing health response: %v", err)
+		}
 	})
 
 	router.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		favicon, err := GetAssetBox().Find("favicon-32x32.png")
+		favicon, err := assetsFS.ReadFile("assets/favicon-32x32.png")
 		if err != nil {
 			logrus.Errorf("Error getting favicon: %v", err)
 			http.Error(w, "Error getting favicon", http.StatusInternalServerError)
 			return
 		}
-		w.Write(favicon)
+		if _, err := w.Write(favicon); err != nil {
+			logrus.Errorf("Error writing favicon: %v", err)
+		}
 	})
 
 	router.HandleFunc("/results.json", func(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +182,7 @@ func GetRouter(c config.Configuration, auditPath string, port int, basePath stri
 			}
 
 			var auditDataObj validator.AuditData
-			auditDataObj, err = validator.RunAudit(adjustedConf, k, false)
+			auditDataObj, err = validator.RunAudit(ctx, adjustedConf, k)
 			if err != nil {
 				http.Error(w, "Error Fetching Deployments", http.StatusInternalServerError)
 				return
@@ -192,20 +193,18 @@ func GetRouter(c config.Configuration, auditPath string, port int, basePath stri
 		JSONHandler(w, r, auditData)
 	})
 
-	router.HandleFunc("/details/{category}", func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		category := vars["category"]
-		category = strings.Replace(category, ".md", "", -1)
-	})
+	router.HandleFunc("/details/{category}", func(http.ResponseWriter, *http.Request) {})
 
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != basePath {
+			logrus.Warningf("Path not found: %s", r.URL.Path)
 			http.NotFound(w, r)
 			return
 		}
 		adjustedConf := getConfigForQuery(c, r.URL.Query())
 
 		if auditData == nil {
+			logrus.Infof("Creating resource provider")
 			k, err := kube.CreateResourceProvider(r.Context(), auditPath, "", c)
 			if err != nil {
 				logrus.Errorf("Error fetching Kubernetes resources %v", err)
@@ -213,20 +212,23 @@ func GetRouter(c config.Configuration, auditPath string, port int, basePath stri
 				return
 			}
 
+			logrus.Infof("Running audit")
 			var auditData validator.AuditData
-			auditData, err = validator.RunAudit(adjustedConf, k, false)
+			auditData, err = validator.RunAudit(ctx, adjustedConf, k)
 			if err != nil {
 				logrus.Errorf("Error getting audit data: %v", err)
 				http.Error(w, "Error running audit", 500)
 				return
 			}
+			logrus.Infof("Sending results")
 			MainHandler(w, r, adjustedConf, auditData, basePath)
 		} else {
+			logrus.Infof("Sending results")
 			MainHandler(w, r, adjustedConf, *auditData, basePath)
 		}
 
 	})
-	return router
+	return router, nil
 }
 
 // MainHandler gets template data and renders the dashboard with it.
@@ -264,5 +266,7 @@ func MainHandler(w http.ResponseWriter, r *http.Request, c config.Configuration,
 func JSONHandler(w http.ResponseWriter, r *http.Request, auditData *validator.AuditData) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(auditData)
+	if err := json.NewEncoder(w).Encode(auditData); err != nil {
+		logrus.Errorf("Error encoding audit JSON: %v", err)
+	}
 }

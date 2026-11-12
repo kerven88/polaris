@@ -52,7 +52,7 @@ customChecks:
     category: Security
     target: Container
     schema:
-      '$schema': http://json-schema.org/draft-07/schema
+      '$schema': https://json-schema.org/draft/2019-09/schema
       type: object
       required:
       - securityContext
@@ -69,7 +69,7 @@ customChecks:
     target: Container
     jsonSchema: >
       {
-        "$schema": "http://json-schema.org/draft-07/schema",
+        "$schema": "https://json-schema.org/draft/2019-09/schema",
         "type": "object",
         "required": ["securityContext"]
       }
@@ -83,7 +83,7 @@ customChecks:
     category: Security
     target: Container
     schema:
-      '$schema': http://json-schema.org/draft-07/schema
+      '$schema': https://json-schema.org/draft/2019-09/schema
       type: object
       required:
       - securityContext
@@ -92,7 +92,7 @@ customChecks:
 
 func TestParseError(t *testing.T) {
 	_, err := Parse([]byte(confInvalid))
-	expectedErr := "Decoding config failed: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal string into Go value of type config.Configuration"
+	expectedErr := "decoding config failed: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal string into Go value of type config.Configuration"
 	assert.EqualError(t, err, expectedErr)
 }
 
@@ -115,7 +115,9 @@ func TestConfigFromURL(t *testing.T) {
 	var parsedConf Configuration
 	srv := &http.Server{Addr: ":8081"}
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, confValidYAML)
+		if _, err := io.WriteString(w, confValidYAML); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	})
 
 	go func() {
@@ -125,7 +127,7 @@ func TestConfigFromURL(t *testing.T) {
 	}()
 	time.Sleep(time.Second)
 
-	parsedConf, err = ParseFile("http://localhost:8081/exampleURL")
+	parsedConf, err = MergeConfigAndParseFile("http://localhost:8081/exampleURL", false)
 	assert.NoError(t, err, "Expected no error when parsing YAML from URL")
 	if err := srv.Shutdown(context.TODO()); err != nil {
 		panic(err)
@@ -136,40 +138,42 @@ func TestConfigFromURL(t *testing.T) {
 
 func TestConfigNoServerError(t *testing.T) {
 	var err error
-	_, err = ParseFile("http://localhost:8081/exampleURL")
+	_, err = MergeConfigAndParseFile("http://localhost:8081/exampleURL", false)
 	assert.Error(t, err)
 	assert.Regexp(t, regexp.MustCompile("connection refused"), err.Error())
 }
 
 func TestConfigWithCustomChecks(t *testing.T) {
-	valid := map[string]interface{}{
-		"securityContext": map[string]interface{}{
+	valid := map[string]any{
+		"securityContext": map[string]any{
 			"foo": "bar",
 		},
 	}
-	invalid := map[string]interface{}{
-		"notSecurityContext": map[string]interface{}{},
+	invalid := map[string]any{
+		"notSecurityContext": map[string]any{},
 	}
 
 	parsedConf, err := Parse([]byte(confCustomChecks))
 	assert.NoError(t, err, "Expected no error when parsing YAML config")
 	assert.Equal(t, 1, len(parsedConf.CustomChecks))
-	isValid, _, err := parsedConf.CustomChecks["foo"].CheckObject(valid)
+	check, err := parsedConf.CustomChecks["foo"].TemplateForResource(map[string]any{})
+	assert.NoError(t, err)
+	isValid, _, err := check.CheckObject(context.TODO(), valid)
 	assert.NoError(t, err)
 	assert.Equal(t, true, isValid)
-	isValid, _, err = parsedConf.CustomChecks["foo"].CheckObject(invalid)
+	isValid, _, err = check.CheckObject(context.TODO(), invalid)
 	assert.NoError(t, err)
 	assert.Equal(t, false, isValid)
 
 	parsedConf, err = Parse([]byte(confCustomChecksWithJSONSchema))
 	assert.NoError(t, err, "Expected no error when parsing YAML config")
 	assert.Equal(t, 1, len(parsedConf.CustomChecks))
-	isValid, problems, err := parsedConf.CustomChecks["foo"].CheckObject(valid)
+	isValid, problems, err := parsedConf.CustomChecks["foo"].CheckObject(context.TODO(), valid)
 	assert.NoError(t, err)
 	if !assert.Equal(t, true, isValid) {
 		fmt.Println(problems[0].PropertyPath, problems[0].InvalidValue, problems[0].Message)
 	}
-	isValid, _, err = parsedConf.CustomChecks["foo"].CheckObject(invalid)
+	isValid, _, err = check.CheckObject(context.TODO(), invalid)
 	assert.NoError(t, err)
 	assert.Equal(t, false, isValid)
 }

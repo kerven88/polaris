@@ -1,6 +1,11 @@
+---
+meta:
+  - name: description
+    content: "Fairwinds Polaris | Learn about Polaris defaults and how to customize configurations. "
+---
 # Configuration
 
-The default Polaris configuration can be [seen here](https://github.com/FairwindsOps/polaris/blob/master/examples/config.yaml).
+The default Polaris configuration can be [seen here](https://github.com/FairwindsOps/polaris/blob/master/pkg/config/default.yaml).
 
 You can customize the configuration to do things like:
 * Turn checks [on and off](checks.md)

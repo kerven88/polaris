@@ -1,15 +1,28 @@
+// Copyright 2022 FairwindsOps, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package test
 
 import (
 	"encoding/json"
 
 	appsv1 "k8s.io/api/apps/v1"
-	appsv1beta1 "k8s.io/api/apps/v1beta1"
-	appsv1beta2 "k8s.io/api/apps/v1beta2"
+	autoscalingV2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
-	batchv1beta1 "k8s.io/api/batch/v1beta1"
 	corev1 "k8s.io/api/core/v1"
-	extv1beta1 "k8s.io/api/extensions/v1beta1"
+	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -19,12 +32,12 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func newUnstructured(apiVersion, kind, namespace, name string, spec map[string]interface{}) unstructured.Unstructured {
+func newUnstructured(apiVersion, kind, namespace, name string, spec map[string]any) unstructured.Unstructured {
 	return unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": apiVersion,
 			"kind":       kind,
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"namespace": namespace,
 				"name":      name,
 			},
@@ -45,6 +58,9 @@ func MockContainer(name string) corev1.Container {
 func MockPod() corev1.Pod {
 	c1 := MockContainer("test")
 	p := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test",
+		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
 				c1,
@@ -62,14 +78,14 @@ func MockNakedPod() corev1.Pod {
 }
 
 // MockIngress creates an ingress object
-func MockIngress() extv1beta1.Ingress {
-	return extv1beta1.Ingress{
-		Spec: extv1beta1.IngressSpec{},
+func MockIngress() networkingv1.Ingress {
+	return networkingv1.Ingress{
+		Spec: networkingv1.IngressSpec{},
 	}
 }
 
 // MockController creates a mock controller and pod
-func MockController(apiVersion, kind, namespace, name string, spec map[string]interface{}, podSpec corev1.PodSpec, dest interface{}) corev1.Pod {
+func MockController(apiVersion, kind, namespace, name string, spec map[string]any, podSpec corev1.PodSpec, dest any) corev1.Pod {
 	unst := newUnstructured(apiVersion, kind, namespace, name, spec)
 	pod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -87,24 +103,27 @@ func MockController(apiVersion, kind, namespace, name string, spec map[string]in
 	if err != nil {
 		panic(err)
 	}
-	json.Unmarshal(b, &dest)
+	err = json.Unmarshal(b, &dest)
+	if err != nil {
+		panic(err)
+	}
 	return pod
 }
 
 // MockControllerWithNormalSpec mocks a controller with podspec at spec.template.spec
-func MockControllerWithNormalSpec(apiVersion, kind, namespace, name string, dest interface{}) corev1.Pod {
+func MockControllerWithNormalSpec(apiVersion, kind, namespace, name string, dest any) corev1.Pod {
 	p := MockPod()
 	b, err := json.Marshal(p.Spec)
 	if err != nil {
 		panic(err)
 	}
-	pSpec := map[string]interface{}{}
+	pSpec := map[string]any{}
 	err = json.Unmarshal(b, &pSpec)
 	if err != nil {
 		panic(err)
 	}
-	spec := map[string]interface{}{
-		"template": map[string]interface{}{
+	spec := map[string]any{
+		"template": map[string]any{
 			"spec": pSpec,
 		},
 	}
@@ -140,11 +159,11 @@ func MockJob(namespace, name string) (batchv1.Job, corev1.Pod) {
 }
 
 // MockCronJob creates a CronJob object.
-func MockCronJob(namespace, name string) (batchv1beta1.CronJob, corev1.Pod) {
-	cj := batchv1beta1.CronJob{}
+func MockCronJob(namespace, name string) (batchv1.CronJob, corev1.Pod) {
+	cj := batchv1.CronJob{}
 	p := MockPod()
-	spec := map[string]interface{}{}
-	pod := MockController("batch/v1beta1", "CronJob", namespace, name, spec, p.Spec, &cj)
+	spec := map[string]any{}
+	pod := MockController("batch/v1", "CronJob", namespace, name, spec, p.Spec, &cj)
 	cj.Spec.JobTemplate.Spec.Template.Spec = pod.Spec
 
 	return cj, pod
@@ -157,12 +176,21 @@ func MockReplicationController(namespace, name string) (corev1.ReplicationContro
 	return rc, pod
 }
 
+// MockNamespace returns a namespace object.
+func MockNamespace(name string) corev1.Namespace {
+	return corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+	}
+}
+
 // SetupTestAPI creates a test kube API struct.
 func SetupTestAPI(objects ...runtime.Object) (kubernetes.Interface, dynamic.Interface) {
 	scheme := runtime.NewScheme()
-	appsv1.AddToScheme(scheme)
-	corev1.AddToScheme(scheme)
-	fake.AddToScheme(scheme)
+	if err := fake.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
 	dynamicClient := dynamicFake.NewSimpleDynamicClient(scheme, objects...)
 	k := fake.NewSimpleClientset(objects...)
 	k.Resources = []*metav1.APIResourceList{
@@ -170,41 +198,57 @@ func SetupTestAPI(objects ...runtime.Object) (kubernetes.Interface, dynamic.Inte
 			GroupVersion: corev1.SchemeGroupVersion.String(),
 			APIResources: []metav1.APIResource{
 				{Name: "pods", Namespaced: true, Kind: "Pod"},
-				{Name: "replicationcontrollers", Namespaced: true, Kind: "ReplicationController"},
+				{Name: "serviceaccounts", Namespaced: true, Kind: "ServiceAccount"},
+				{Name: "configmaps", Namespaced: true, Kind: "ConfigMap"},
 			},
 		},
 		{
 			GroupVersion: appsv1.SchemeGroupVersion.String(),
 			APIResources: []metav1.APIResource{
-				{Name: "deployments", Namespaced: true, Kind: "Deployment"},
-				{Name: "daemonsets", Namespaced: true, Kind: "DaemonSet"},
-				{Name: "statefulsets", Namespaced: true, Kind: "StatefulSet"},
+				{Name: "deployments", Namespaced: true, Kind: "Deployment", Version: "v1"},
+				{Name: "daemonsets", Namespaced: true, Kind: "DaemonSet", Version: "v1"},
+				{Name: "statefulsets", Namespaced: true, Kind: "StatefulSet", Version: "v1"},
 			},
 		},
 		{
 			GroupVersion: batchv1.SchemeGroupVersion.String(),
 			APIResources: []metav1.APIResource{
-				{Name: "jobs", Namespaced: true, Kind: "Job"},
+				{Name: "cronjobs", Namespaced: true, Kind: "CronJob", Version: "v1"},
+				{Name: "jobs", Namespaced: true, Kind: "Job", Version: "v1"},
 			},
 		},
 		{
-			GroupVersion: batchv1beta1.SchemeGroupVersion.String(),
+			GroupVersion: "networking.k8s.io/v1",
 			APIResources: []metav1.APIResource{
-				{Name: "cronjobs", Namespaced: true, Kind: "CronJob"},
+				{Name: "ingresses", Namespaced: true, Kind: "Ingress", Version: "v1"},
+				{Name: "networkpolicies", Namespaced: true, Kind: "NetworkPolicy", Version: "v1"},
 			},
 		},
 		{
-			GroupVersion: appsv1beta2.SchemeGroupVersion.String(),
+			GroupVersion: policyv1.SchemeGroupVersion.String(),
 			APIResources: []metav1.APIResource{
-				{Name: "deployments", Namespaced: true, Kind: "Deployment"},
-				{Name: "deployments/scale", Namespaced: true, Kind: "Scale", Group: "apps", Version: "v1beta2"},
+				{Name: "poddisruptionbudgets", Namespaced: true, Kind: "PodDisruptionBudget", Version: "v1"},
 			},
 		},
 		{
-			GroupVersion: appsv1beta1.SchemeGroupVersion.String(),
+			GroupVersion: autoscalingV2.SchemeGroupVersion.String(),
 			APIResources: []metav1.APIResource{
-				{Name: "statefulsets", Namespaced: true, Kind: "StatefulSet"},
-				{Name: "statefulsets/scale", Namespaced: true, Kind: "Scale", Group: "apps", Version: "v1beta1"},
+				{Name: "horizontalpodautoscalers", Namespaced: true, Kind: "HorizontalPodAutoscaler", Version: "v2"},
+			},
+		},
+		{
+			GroupVersion: "core/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "namespaces", Namespaced: false, Kind: "Namespace"},
+			},
+		},
+		{
+			GroupVersion: "rbac.authorization.k8s.io/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "clusterroles", Namespaced: false, Kind: "ClusterRole"},
+				{Name: "roles", Namespaced: true, Kind: "Role"},
+				{Name: "clusterrolebindings", Namespaced: false, Kind: "ClusterRoleBinding"},
+				{Name: "rolebindings", Namespaced: true, Kind: "RoleBinding"},
 			},
 		},
 	}
@@ -213,6 +257,7 @@ func SetupTestAPI(objects ...runtime.Object) (kubernetes.Interface, dynamic.Inte
 
 // GetMockControllers returns mocked controllers for 5 major controller types
 func GetMockControllers(namespace string) []runtime.Object {
+	ns := MockNamespace(namespace)
 	deploy, deployPod := MockDeploy(namespace, "deploy")
 	statefulset, statefulsetPod := MockStatefulSet(namespace, "statefulset")
 	daemonset, daemonsetPod := MockDaemonSet(namespace, "daemonset")
@@ -224,5 +269,6 @@ func GetMockControllers(namespace string) []runtime.Object {
 		&statefulset, &statefulsetPod,
 		&cronjob, &cronjobPod,
 		&job, &jobPod,
+		&ns,
 	}
 }
